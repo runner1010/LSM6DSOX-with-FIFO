@@ -1,0 +1,3 @@
+- Setup FIFO buffer with LSM6DSOX
+- Read from buffer
+- Send data to another program for graphing?
