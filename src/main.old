@@ -1,0 +1,149 @@
+#include <Arduino.h>
+#include <Wire.h>
+
+#define LSM6DSOX_ADDR 0x6A // Default I2C address
+
+// Register addresses
+#define CTRL3_C      0x12
+#define CTRL1_XL     0x10
+#define FIFO_CTRL1   0x07
+#define FIFO_CTRL2   0x08
+#define FIFO_CTRL3   0x09
+#define FIFO_CTRL4   0x0A
+#define FIFO_STATUS1 0x3A
+#define FIFO_DATA_OUT_TAG 0x78
+#define FIFO_DATA_OUT_X_L 0x79
+
+// put function declarations here:
+int myFunction(int, int);
+
+void writeRegister(uint8_t reg, uint8_t value) {
+    Wire.beginTransmission(LSM6DSOX_ADDR);
+    Wire.write(reg);
+    Wire.write(value);
+    Wire.endTransmission();
+}
+
+uint8_t readRegister(uint8_t reg) {
+    Wire.beginTransmission(LSM6DSOX_ADDR);
+    Wire.write(reg);
+    Wire.endTransmission(false);
+    Wire.requestFrom(LSM6DSOX_ADDR, 1);
+    return Wire.read();
+}
+
+void setupFIFO() {
+    writeRegister(CTRL3_C, 0x01); // Software reset
+    delay(100);
+
+    // Set accelerometer ODR to 6667 Hz, FS = 4g
+    writeRegister(CTRL1_XL, 0xB8);
+
+    // Disable gyro (set ODR_G to power-down)
+    writeRegister(0x11, 0x00); // CTRL2_G: ODR_G=0b0000 (power-down), FS_G=0b00
+
+    // Disable timestamp (CTRL10_C, bit 5)
+    uint8_t ctrl10 = readRegister(0x19);
+    ctrl10 &= ~(1 << 5); // Clear TIMESTAMP_EN
+    writeRegister(0x19, ctrl10);
+
+    // Disable sensor hub (FUNC_CFG_ACCESS, SLV0-3 CONFIG)
+    writeRegister(0x01, 0x00); // FUNC_CFG_ACCESS
+    writeRegister(0x15, 0x00); // SLV0_CONFIG
+    writeRegister(0x17, 0x00); // SLV1_CONFIG
+    writeRegister(0x19, 0x00); // SLV2_CONFIG
+    writeRegister(0x1B, 0x00); // SLV3_CONFIG
+
+    // Disable external sensors (SLV0-3 addresses)
+    writeRegister(0x02, 0x00); // SLV0_ADD
+    writeRegister(0x04, 0x00); // SLV1_ADD
+    writeRegister(0x06, 0x00); // SLV2_ADD
+    writeRegister(0x08, 0x00); // SLV3_ADD
+
+    // Disable step counter
+    writeRegister(0x19, 0x00); // STEP_COUNTER_CTRL
+
+    // FIFO threshold (optional, e.g., 32 samples)
+    writeRegister(FIFO_CTRL1, 0x20);
+
+    // FIFO_CTRL2: Set threshold MSB and enable FIFO for XL only
+    writeRegister(FIFO_CTRL2, 0x00);
+
+    // FIFO_CTRL3: Store only XL in FIFO
+    writeRegister(FIFO_CTRL3, 0x01); // XL=0b01, G=0b00
+
+    // FIFO_CTRL4: FIFO mode = Continuous
+    writeRegister(FIFO_CTRL4, 0x01);
+}
+
+void setup() {
+    Wire.begin(8, 9); // SDA = GPIO8, SCL = GPIO9
+    Serial.begin(115200);
+    setupFIFO();
+}
+
+void loop() {
+    uint8_t samples = readRegister(FIFO_STATUS1);
+    if (samples > 0) {
+        for (uint8_t i = 0; i < samples; i++) {
+            Wire.beginTransmission(LSM6DSOX_ADDR);
+            Wire.write(FIFO_DATA_OUT_TAG);
+            Wire.endTransmission(false);
+            Wire.requestFrom(LSM6DSOX_ADDR, 7); // 1 tag + 6 data bytes
+
+            uint8_t tag = Wire.read();
+            int16_t x = Wire.read() | (Wire.read() << 8);
+            int16_t y = Wire.read() | (Wire.read() << 8);
+            int16_t z = Wire.read() | (Wire.read() << 8);
+
+            Serial.print("TAG: 0x");
+            Serial.print(tag, HEX);
+            Serial.print(" ");
+
+            switch (tag & 0x0F) {
+                case 0x01:
+                    Serial.print("ACCEL: ");
+                    break;
+                case 0x02:
+                    Serial.print("GYRO: ");
+                    break;
+                case 0x03:
+                    Serial.print("TEMPERATURE: ");
+                    break;
+                case 0x04:
+                    Serial.print("TIMESTAMP: ");
+                    break;
+                case 0x05:
+                    Serial.print("STEP_COUNTER: ");
+                    break;
+                case 0x06:
+                    Serial.print("SENSOR_HUB: ");
+                    break;
+                case 0x07:
+                    Serial.print("EXT_SENSOR_0: ");
+                    break;
+                case 0x08:
+                    Serial.print("EXT_SENSOR_1: ");
+                    break;
+                case 0x09:
+                    Serial.print("EXT_SENSOR_2: ");
+                    break;
+                case 0x0A:
+                    Serial.print("EXT_SENSOR_3: ");
+                    break;
+                case 0x0F:
+                    Serial.print("ERROR: ");
+                    break;
+                default:
+                    Serial.print("UNKNOWN TAG: 0x");
+                    Serial.print(tag, HEX);
+                    Serial.print(" ");
+                    break;
+            }
+            Serial.print("X: "); Serial.print(x);
+            Serial.print(" Y: "); Serial.print(y);
+            Serial.print(" Z: "); Serial.println(z);
+        }
+    }
+    delay(10);
+}
